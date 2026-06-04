@@ -1058,6 +1058,12 @@ play_to_main_scene() {
   local next_data_log=0
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
+    if ! is_game_foreground && ! webview_browser_foreground; then
+      log "Waiting for game foreground (${waited}s)."
+      scaled_sleep 5
+      waited=$((waited + 5))
+      continue
+    fi
     if loading_data_visible; then
       if [ "$waited" -ge "$next_data_log" ]; then
         log "Still on Data loading screen (${waited}s); wait without tapping."
