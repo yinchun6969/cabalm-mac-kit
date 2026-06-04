@@ -14,6 +14,25 @@ if [ ! -f "$INSTALL_DIR/config/cabalm.env" ]; then
   cp "$SOURCE_DIR/config/cabalm.env.example" "$INSTALL_DIR/config/cabalm.env"
 fi
 
+if [ -d "/Volumes/DDISK/macOS/Android/avd" ]; then
+  tmp_config="$(mktemp)"
+  awk '
+    BEGIN { done = 0 }
+    /^CABALM_AVD_HOME=/ {
+      print "CABALM_AVD_HOME=\"/Volumes/DDISK/macOS/Android/avd\""
+      done = 1
+      next
+    }
+    { print }
+    END {
+      if (done == 0) {
+        print "CABALM_AVD_HOME=\"/Volumes/DDISK/macOS/Android/avd\""
+      }
+    }
+  ' "$INSTALL_DIR/config/cabalm.env" >"$tmp_config"
+  mv "$tmp_config" "$INSTALL_DIR/config/cabalm.env"
+fi
+
 make_command() {
   local path="$1"
   local body="$2"
@@ -63,4 +82,3 @@ read -r -p \"按回车关闭窗口...\" _"
 echo "Installed CabalM Mac Kit to: $INSTALL_DIR"
 echo "Config file: $INSTALL_DIR/config/cabalm.env"
 echo "Desktop shortcuts were created in: $DESKTOP_DIR"
-
