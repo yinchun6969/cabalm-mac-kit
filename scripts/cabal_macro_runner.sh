@@ -1055,22 +1055,26 @@ enter_cached_character_flow() {
 
 play_to_main_scene() {
   local waited=0
-  local announcement_attempt_after=240
-  local next_flow_attempt=260
+  local next_data_log=0
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
-    if [ "$waited" -ge "$announcement_attempt_after" ]; then
-      handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
-      handle_sdk_announcement
+    if loading_data_visible; then
+      if [ "$waited" -ge "$next_data_log" ]; then
+        log "Still on Data loading screen (${waited}s); wait without tapping."
+        next_data_log=$((next_data_log + 60))
+      fi
+      scaled_sleep 10
+      waited=$((waited + 10))
+      continue
     fi
-    if [ "$waited" -ge "$next_flow_attempt" ]; then
-      log "Try cached-login server/character flow at ${waited}s."
-      enter_cached_character_flow || true
-      dismiss_system_anr
-      common_confirm_sweep
-      log "Cached-login flow was attempted; stop scripted taps and leave the game running."
-      return 0
-    fi
+    handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
+    handle_sdk_announcement
+    log "Try cached-login server/character flow after Data loading cleared (${waited}s)."
+    enter_cached_character_flow || true
+    dismiss_system_anr
+    common_confirm_sweep
+    log "Cached-login flow was attempted; stop scripted taps and leave the game running."
+    return 0
     scaled_sleep 10
     waited=$((waited + 10))
   done
