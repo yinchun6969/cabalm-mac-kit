@@ -47,24 +47,35 @@ export CONFIG_FILE=\"$INSTALL_DIR/config/cabalm.env\"
 export SERIAL=emulator-5554
 export AVD_NAME=macos_game_a9_01
 export EMULATOR_PORT=5554
-export EMULATOR_LAUNCH_METHOD=nohup
+export GPU_MODE=swangle
+export MEMORY_MB=6144
+export CORES=4
+export EMULATOR_LAUNCH_METHOD=terminal
+export LOAD_WAIT_SECONDS=600
 cd \"$INSTALL_DIR/scripts\"
-exec ./cabal_macro_runner.sh recover 1"
+exec ./cabal_macro_runner.sh play 1"
 
-make_command "$DESKTOP_DIR/启动新惊天动地三开.command" "#!/usr/bin/env bash
+make_command "$DESKTOP_DIR/启动新惊天动地双开.command" "#!/usr/bin/env bash
 set -euo pipefail
 export CABALM_HOME=\"$INSTALL_DIR\"
 export CONFIG_FILE=\"$INSTALL_DIR/config/cabalm.env\"
-export EMULATOR_LAUNCH_METHOD=nohup
+export GPU_MODE=swangle
+export MEMORY_MB=6144
+export CORES=4
+export EMULATOR_LAUNCH_METHOD=terminal
 export STOP_HOST_VPN_FOR_GAME=0
 export ALLOW_HOST_VPN_STOP_FOR_GAME=0
 export GAME_HOSTS_OVERRIDE=0
 export GAME_HOSTS_IP=
 cd \"$INSTALL_DIR/scripts\"
-env SERIAL=emulator-5554 AVD_NAME=macos_game_a9_01 EMULATOR_PORT=5554 MEMORY_MB=4096 ./cabal_macro_runner.sh network 1
-env SERIAL=emulator-5556 AVD_NAME=macos_game_a9_02 EMULATOR_PORT=5556 MEMORY_MB=4096 ./cabal_macro_runner.sh network 1
-env SERIAL=emulator-5558 AVD_NAME=macos_game_a9_03 EMULATOR_PORT=5558 MEMORY_MB=4096 ./cabal_macro_runner.sh network 1
-echo \"三开启动流程完成。请分别使用不同账号登录，避免互踢。\"
+env SERIAL=emulator-5554 AVD_NAME=macos_game_a9_01 EMULATOR_PORT=5554 ./cabal_macro_runner.sh network 1
+env SERIAL=emulator-5556 AVD_NAME=macos_game_a9_02 EMULATOR_PORT=5556 ./cabal_macro_runner.sh network 1
+echo \"双开启动流程完成。请分别使用不同账号登录，避免互踢。\"
+read -r -p \"按回车关闭窗口...\" _"
+
+make_command "$DESKTOP_DIR/启动新惊天动地三开.command" "#!/usr/bin/env bash
+set -euo pipefail
+\"$DESKTOP_DIR/启动新惊天动地双开.command\"
 read -r -p \"按回车关闭窗口...\" _"
 
 make_command "$DESKTOP_DIR/新惊天动地辅助菜单.command" "#!/usr/bin/env bash

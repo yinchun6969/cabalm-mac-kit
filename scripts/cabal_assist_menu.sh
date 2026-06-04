@@ -25,8 +25,8 @@ case "$instance" in
 esac
 
 export SERIAL AVD_NAME EMULATOR_PORT
-export GPU_MODE=host MEMORY_MB=6144 CORES=2 FPS=30
-export EMULATOR_LAUNCH_METHOD=nohup
+export GPU_MODE=swangle MEMORY_MB=6144 CORES=4 FPS=30
+export EMULATOR_LAUNCH_METHOD=terminal
 export WORK_DIR="${WORK_DIR:-$CABALM_HOME/tmp}"
 export TMPDIR="${TMPDIR:-$WORK_DIR/tmp}"
 export STOP_HOST_VPN_FOR_GAME=0 ALLOW_HOST_VPN_STOP_FOR_GAME=0 GAME_HOSTS_OVERRIDE=0 GAME_HOSTS_IP=
@@ -44,8 +44,9 @@ keyevent() {
 close_panels() {
   keyevent BACK 0.3
   tap 1050 150 0.25
+  tap 1010 39 0.25
   tap 1010 43 0.25
-  tap 1194 42 0.25
+  tap 1196 35 0.25
   tap 1237 44 0.25
   tap 640 610 0.25
   tap 523 472 0.25
@@ -85,6 +86,7 @@ printf '  7 启动24小时属性加点/关闭面板守护\n'
 printf '  8 停止24小时属性加点/关闭面板守护\n'
 printf '  9 离线补全游戏资源（保留当前账号状态）\n'
 printf '  10 只同步 CEGUI 资源补丁\n'
+printf '  11 启动并进入真实主游戏场景\n'
 read -r -p "选择动作，回车默认 1: " action
 action="${action:-1}"
 
@@ -99,6 +101,7 @@ case "$action" in
   8) "$SCRIPT_DIR/cabal_attr_guard.sh" stop ;;
   9) PRESERVE_LOGIN_STATE=1 "$RESOURCE_SYNC" ;;
   10) "$MACRO" sync_resources 1 ;;
+  11) "$MACRO" play 1 ;;
   *) echo "动作无效：$action"; exit 1 ;;
 esac
 

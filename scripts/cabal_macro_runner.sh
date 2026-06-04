@@ -16,19 +16,19 @@ SERIAL="${SERIAL:-emulator-5554}"
 AVD_NAME="${AVD_NAME:-macos_game_a9_01}"
 AVD_HOME="${ANDROID_AVD_HOME:-${CABALM_AVD_HOME:-$HOME/.android/avd}}"
 EMULATOR_PORT="${EMULATOR_PORT:-}"
-GPU_MODE="${GPU_MODE:-host}"
+GPU_MODE="${GPU_MODE:-swangle}"
 MEMORY_MB="${MEMORY_MB:-6144}"
-CORES="${CORES:-2}"
+CORES="${CORES:-4}"
 FPS="${FPS:-30}"
 WORK_DIR="${WORK_DIR:-$CABALM_HOME/tmp}"
 TMPDIR="${TMPDIR:-$WORK_DIR/tmp}"
 export TMPDIR
-EMULATOR_LAUNCH_METHOD="${EMULATOR_LAUNCH_METHOD:-nohup}"
+EMULATOR_LAUNCH_METHOD="${EMULATOR_LAUNCH_METHOD:-terminal}"
 EMULATOR_LOG_FILE="${EMULATOR_LOG_FILE:-$WORK_DIR/${AVD_NAME}-${GPU_MODE}.log}"
 WRITABLE_SYSTEM="${WRITABLE_SYSTEM:-1}"
 AUTO_BOOT="${AUTO_BOOT:-1}"
 BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-120}"
-LOAD_WAIT_SECONDS="${LOAD_WAIT_SECONDS:-120}"
+LOAD_WAIT_SECONDS="${LOAD_WAIT_SECONDS:-600}"
 GAME_PACKAGE="${GAME_PACKAGE:-com.u1game.cabalm}"
 GAME_ACTIVITY="${GAME_ACTIVITY:-com.iccgame.sdk.SplashActivity}"
 GAME_FILES_DIR="${GAME_FILES_DIR:-/data/data/$GAME_PACKAGE/files}"
@@ -260,6 +260,11 @@ foreground_component() {
   '
 }
 
+foreground_matches() {
+  local pattern="$1"
+  foreground_component | grep -Eq "$pattern"
+}
+
 current_focus_line() {
   adb_shell dumpsys window windows 2>/dev/null | awk '/mCurrentFocus=/ { print; exit }'
 }
@@ -291,6 +296,7 @@ dismiss_system_anr() {
   if system_anr_visible; then
     log "SystemUI ANR dialog detected; tap Wait."
     adb_shell input tap 640 460 >/dev/null 2>&1 || true
+    adb_shell input tap 260 580 >/dev/null 2>&1 || true
     scaled_sleep 2
   fi
 }
@@ -300,6 +306,10 @@ is_game_foreground() {
     "$GAME_PACKAGE"/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+webview_browser_foreground() {
+  foreground_matches '^org\.chromium\.webview_shell/'
 }
 
 ensure_game_foreground() {
@@ -994,6 +1004,74 @@ disconnect_confirm_sweep() {
   tap 640 610 0.5
 }
 
+start_cabal_activity() {
+  adb_shell am start -n "$GAME_PACKAGE/com.estsoft.cabal.androidtv.CabalActivity" >/dev/null 2>&1 || true
+  scaled_sleep 2
+}
+
+handle_webview_browser() {
+  if ! webview_browser_foreground; then
+    return 1
+  fi
+  log "WebView Browser Tester is foreground; press BACK to return to the game shell."
+  keyevent KEYCODE_BACK 2.0
+  # Historical successful runs sometimes showed an exit confirmation here.
+  tap 340 366 0.8
+  tap 523 472 0.8
+  return 0
+}
+
+handle_sdk_announcement() {
+  local focus
+  focus="$(foreground_component || true)"
+  case "$focus" in
+    "$GAME_PACKAGE"/com.iccgame.sdk.SplashActivity|"$GAME_PACKAGE"/com.estsoft.cabal.androidtv.CabalActivity)
+      log "Try closing SDK announcement and returning through WebView Browser Tester."
+      tap 1196 35 2.0
+      if handle_webview_browser; then
+        return 0
+      fi
+      # Some emulator runs keep the announcement under SplashActivity until the native game
+      # activity is nudged; this is the path verified on the test Mac.
+      start_cabal_activity
+      tap 1196 35 2.0
+      handle_webview_browser || true
+      ;;
+  esac
+}
+
+enter_cached_character_flow() {
+  skip_if_not_game_foreground && return 1
+  # Server landing page: "please tap screen".
+  tap 640 455 8.0
+  # Character page: start the selected character.
+  tap 1120 672 18.0
+  # Store, sign-in, and activity popups that can cover the real scene.
+  tap 1010 39 1.0
+  tap 1010 43 1.0
+  tap 1196 35 1.0
+  tap 1237 44 0.5
+}
+
+play_to_main_scene() {
+  local waited=0
+  local next_flow_attempt=260
+  while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
+    dismiss_system_anr
+    handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
+    handle_sdk_announcement
+    if [ "$waited" -ge "$next_flow_attempt" ]; then
+      log "Try cached-login server/character flow at ${waited}s."
+      enter_cached_character_flow || true
+      dismiss_system_anr
+      common_confirm_sweep
+      next_flow_attempt=$((next_flow_attempt + 90))
+    fi
+    scaled_sleep 10
+    waited=$((waited + 10))
+  done
+}
+
 enter_game_after_load() {
   local waited=0
   local data_ticks=0
@@ -1001,6 +1079,8 @@ enter_game_after_load() {
   local back_done=0
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
+    handle_webview_browser && continue
+    handle_sdk_announcement
     if login_or_server_screen_visible; then
       log "Login/server screen is visible; stop load recovery."
       return 0
@@ -1078,6 +1158,14 @@ recover_game() {
   skip_tutorial_popups
 }
 
+play_game() {
+  prepare_game_screen
+  repair_network
+  restart_game
+  play_to_main_scene
+  skip_tutorial_popups
+}
+
 full_assist_cycle() {
   reconnect_game
   skip_tutorial_popups
@@ -1105,6 +1193,7 @@ usage() {
   network       修复模拟器内网络：清代理、Private DNS、IPv6、ipv6proxy
   reconnect     处理服务器断开/公告/登录确认，尝试重新进入游戏
   recover       更强恢复：无设备时自动启动模拟器，重启游戏，处理断线和公告
+  play          启动并尽量进入真实主游戏场景：公告/WebView/服务器/角色/常见弹窗
   enter         等待下载完成，持续关闭公告并尝试进入游戏
   full          综合执行：skip + upgrade + daily + quest + battle
 
@@ -1112,6 +1201,7 @@ usage() {
   ./cabal_macro_runner.sh quest 5
   ./cabal_macro_runner.sh battle 20
   ./cabal_macro_runner.sh recover 1
+  ./cabal_macro_runner.sh play 1
   ./cabal_macro_runner.sh enter 1
   SPEED=1.3 ./cabal_macro_runner.sh quest 3
 
@@ -1122,12 +1212,13 @@ usage() {
   SERIAL=emulator-5554
 	  AVD_NAME=macos_game_a9_01
 	  EMULATOR_PORT=5554
-	  GPU_MODE=host
+	  GPU_MODE=swangle
 	  MEMORY_MB=6144
+	  CORES=4
 	  WORK_DIR=$HOME/CabalmMacKit/tmp
 	  TMPDIR=$HOME/CabalmMacKit/tmp/tmp
-	  EMULATOR_LAUNCH_METHOD=nohup
-	  EMULATOR_LOG_FILE=$HOME/CabalmMacKit/tmp/macos_game_a9_01-software.log
+	  EMULATOR_LAUNCH_METHOD=terminal
+	  EMULATOR_LOG_FILE=$HOME/CabalmMacKit/tmp/macos_game_a9_01-swangle.log
 	  GAME_DIRECT_HTTP_PROXY=1
 	  FPS=30
   WRITABLE_SYSTEM=1
@@ -1153,6 +1244,7 @@ run_once() {
     network) repair_network ;;
     reconnect) reconnect_game ;;
     recover) recover_game ;;
+    play) play_game ;;
     enter) enter_game_after_load ;;
     full) full_assist_cycle ;;
     help|--help|-h) usage; exit 0 ;;
