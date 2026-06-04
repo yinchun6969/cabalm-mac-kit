@@ -14,6 +14,28 @@ if [ ! -f "$INSTALL_DIR/config/cabalm.env" ]; then
   cp "$SOURCE_DIR/config/cabalm.env.example" "$INSTALL_DIR/config/cabalm.env"
 fi
 
+set_config_value() {
+  local key="$1"
+  local value="$2"
+  local tmp_config
+  tmp_config="$(mktemp)"
+  awk -v key="$key" -v line="$key=$value" '
+    BEGIN { done = 0 }
+    $0 ~ "^" key "=" {
+      print line
+      done = 1
+      next
+    }
+    { print }
+    END {
+      if (done == 0) {
+        print line
+      }
+    }
+  ' "$INSTALL_DIR/config/cabalm.env" >"$tmp_config"
+  mv "$tmp_config" "$INSTALL_DIR/config/cabalm.env"
+}
+
 if [ -d "/Volumes/DDISK/macOS/Android/avd" ]; then
   tmp_config="$(mktemp)"
   awk '
@@ -32,6 +54,13 @@ if [ -d "/Volumes/DDISK/macOS/Android/avd" ]; then
   ' "$INSTALL_DIR/config/cabalm.env" >"$tmp_config"
   mv "$tmp_config" "$INSTALL_DIR/config/cabalm.env"
 fi
+
+set_config_value GPU_MODE swangle
+set_config_value MEMORY_MB 6144
+set_config_value CORES 4
+set_config_value FPS 30
+set_config_value EMULATOR_LAUNCH_METHOD terminal
+set_config_value LOAD_WAIT_SECONDS 600
 
 make_command() {
   local path="$1"
