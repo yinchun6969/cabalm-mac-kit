@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CABALM_HOME="${CABALM_HOME:-$HOME/CabalmMacKit}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CABALM_HOME="${CABALM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 CONFIG_FILE="${CONFIG_FILE:-$CABALM_HOME/config/cabalm.env}"
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
@@ -39,4 +40,3 @@ echo "== Recent emulator graphics errors =="
 find "$WORK_DIR" "$LOG_DIR" -maxdepth 1 -type f -name '*.log' 2>/dev/null \
   -print0 | xargs -0 grep -H -E 'bad window surface|bad color buffer|ColorBufferGl|Application Not Responding|isn.t responding|FATAL EXCEPTION|ANR' 2>/dev/null \
   | tail -80 || true
-

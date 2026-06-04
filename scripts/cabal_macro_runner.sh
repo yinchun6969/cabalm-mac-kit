@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CABALM_HOME="${CABALM_HOME:-${HOME}/CabalmMacKit}"
+CABALM_HOME="${CABALM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 CONFIG_FILE="${CONFIG_FILE:-$CABALM_HOME/config/cabalm.env}"
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
