@@ -1056,8 +1056,15 @@ enter_cached_character_flow() {
 play_to_main_scene() {
   local waited=0
   local next_data_log=0
+  local initial_wait_seconds="${INITIAL_PLAY_WAIT_SECONDS:-60}"
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
+    if [ "$waited" -lt "$initial_wait_seconds" ]; then
+      log "Initial game startup wait (${waited}s/${initial_wait_seconds}s)."
+      scaled_sleep 10
+      waited=$((waited + 10))
+      continue
+    fi
     if ! is_game_foreground && ! webview_browser_foreground; then
       log "Waiting for game foreground (${waited}s)."
       scaled_sleep 5
