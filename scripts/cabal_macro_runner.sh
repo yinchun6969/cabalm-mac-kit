@@ -1055,11 +1055,14 @@ enter_cached_character_flow() {
 
 play_to_main_scene() {
   local waited=0
+  local announcement_attempt_after=240
   local next_flow_attempt=260
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
-    handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
-    handle_sdk_announcement
+    if [ "$waited" -ge "$announcement_attempt_after" ]; then
+      handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
+      handle_sdk_announcement
+    fi
     if [ "$waited" -ge "$next_flow_attempt" ]; then
       log "Try cached-login server/character flow at ${waited}s."
       enter_cached_character_flow || true
