@@ -1045,7 +1045,7 @@ enter_cached_character_flow() {
   # Server landing page: "please tap screen".
   tap 640 455 8.0
   # Character page: start the selected character.
-  tap 1120 672 18.0
+  tap 1120 672 30.0
   # Store, sign-in, and activity popups that can cover the real scene.
   tap 1010 39 1.0
   tap 1010 43 1.0
@@ -1068,7 +1068,8 @@ play_to_main_scene() {
       enter_cached_character_flow || true
       dismiss_system_anr
       common_confirm_sweep
-      next_flow_attempt=$((next_flow_attempt + 90))
+      log "Cached-login flow was attempted; stop scripted taps and leave the game running."
+      return 0
     fi
     scaled_sleep 10
     waited=$((waited + 10))
