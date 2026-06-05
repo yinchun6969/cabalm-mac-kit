@@ -1,6 +1,6 @@
 # CabalM Mac Kit
 
-Portable macOS helper scripts for running the Android emulator setup used for CabalM / 新惊天动地 testing.
+Portable macOS helper scripts for running the Android emulator setup used for CabalM / 新惊天动地 testing, including desktop launchers, network repair, terminal cleanup, and an unattended 48-hour pressure-test runner. The installed scripts are standalone shell tools; Codex is not required after installation.
 
 Read the Chinese guide first: [README.zh-CN.md](README.zh-CN.md).
 

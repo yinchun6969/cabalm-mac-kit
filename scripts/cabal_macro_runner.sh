@@ -23,7 +23,7 @@ FPS="${FPS:-30}"
 WORK_DIR="${WORK_DIR:-$CABALM_HOME/tmp}"
 TMPDIR="${TMPDIR:-$WORK_DIR/tmp}"
 export TMPDIR
-EMULATOR_LAUNCH_METHOD="${EMULATOR_LAUNCH_METHOD:-terminal}"
+EMULATOR_LAUNCH_METHOD="${EMULATOR_LAUNCH_METHOD:-nohup}"
 EMULATOR_LOG_FILE="${EMULATOR_LOG_FILE:-$WORK_DIR/${AVD_NAME}-${GPU_MODE}.log}"
 WRITABLE_SYSTEM="${WRITABLE_SYSTEM:-1}"
 AUTO_BOOT="${AUTO_BOOT:-1}"
@@ -410,6 +410,53 @@ keyevent() {
   fi
   adb_shell input keyevent "$key" >/dev/null || true
   scaled_sleep "$delay"
+}
+
+dialog_button_kind() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB_BIN" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+x = int(sys.argv[1])
+y = int(sys.argv[2])
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+if not (0 <= x < w and 0 <= y < h):
+    sys.exit(1)
+i = 16 + (y * w + x) * 4
+if i + 4 > len(data):
+    sys.exit(1)
+r, g, b, a = data[i:i + 4]
+if g >= 155 and b >= 100 and r <= 95 and (g - r) >= 55:
+    print("exit_confirm_green")
+elif 35 <= r <= 195 and 35 <= g <= 205 and b >= r + 8 and b >= g - 8:
+    print("return_cancel_grayblue")
+else:
+    print("none")
+' 748 485
+}
+
+cancel_self_drawn_danger_dialogs() {
+  is_game_foreground || return 0
+  local kind
+  kind="$(dialog_button_kind 2>/dev/null || true)"
+  case "$kind" in
+    exit_confirm_green)
+      log "Self-drawn exit-game confirmation detected; tap left Cancel."
+      tap 480 477 0.4
+      ;;
+    return_cancel_grayblue)
+      log "Self-drawn disconnect/return-to-character dialog detected; tap right Cancel/No."
+      tap 748 485 0.4
+      ;;
+  esac
+}
+
+safe_back() {
+  local delay="${1:-0.25}"
+  keyevent KEYCODE_BACK "$delay"
+  cancel_self_drawn_danger_dialogs
 }
 
 ensure_device() {
@@ -977,7 +1024,8 @@ apply_game_hosts_override() {
 
 common_confirm_sweep() {
   skip_if_not_game_foreground && return 0
-  keyevent KEYCODE_BACK 0.4
+  cancel_self_drawn_danger_dialogs
+  safe_back 0.4
   tap 890 445 0.25
   tap 48 104 0.25
   tap 523 472 0.25
@@ -992,7 +1040,8 @@ common_confirm_sweep() {
 
 skip_tutorial_popups() {
   skip_if_not_game_foreground && return 0
-  keyevent KEYCODE_BACK 0.5
+  cancel_self_drawn_danger_dialogs
+  safe_back 0.5
   tap 125 48 0.5
   tap 523 472 0.5
   tap 650 526 0.5
@@ -1064,9 +1113,10 @@ buy_potions_assist() {
 
 disconnect_confirm_sweep() {
   skip_if_not_game_foreground && return 0
+  cancel_self_drawn_danger_dialogs
   tap 890 445 1.0
   tap 48 104 1.0
-  tap 640 474 1.0
+  cancel_self_drawn_danger_dialogs
   tap 447 484 1.0
   tap 1193 38 1.0
   tap 1193 38 1.0
@@ -1084,7 +1134,7 @@ handle_webview_browser() {
     return 1
   fi
   log "WebView Browser Tester is foreground; press BACK to return to the game shell."
-  keyevent KEYCODE_BACK 2.0
+  safe_back 2.0
   # Historical successful runs sometimes showed an exit confirmation here.
   tap 340 366 0.8
   tap 523 472 0.8
@@ -1205,7 +1255,7 @@ enter_game_after_load() {
       fi
       if [ "$data_ticks" -ge 12 ] && [ "$back_done" = "0" ]; then
         log "Nudge stuck SDK/game surface with one BACK key."
-        keyevent KEYCODE_BACK 3.0
+        safe_back 3.0
         back_done=1
         continue
       fi
@@ -1318,7 +1368,7 @@ usage() {
 	  CORES=4
 	  WORK_DIR=$HOME/CabalmMacKit/tmp
 	  TMPDIR=$HOME/CabalmMacKit/tmp/tmp
-	  EMULATOR_LAUNCH_METHOD=terminal
+	  EMULATOR_LAUNCH_METHOD=nohup
 	  EMULATOR_LOG_FILE=$HOME/CabalmMacKit/tmp/macos_game_a9_01-swangle.log
 	  GAME_DIRECT_HTTP_PROXY=1
 	  FPS=30
