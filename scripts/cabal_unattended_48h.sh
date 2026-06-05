@@ -183,6 +183,110 @@ close_system_mail_panel() {
   tap 985 116 0.25
 }
 
+screen_blocking_kind() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+
+def pix(x, y):
+    x = max(0, min(w - 1, int(x * w / 1280)))
+    y = max(0, min(h - 1, int(y * h / 720)))
+    i = 16 + (y * w + x) * 4
+    return data[i:i + 4]
+
+def bright_count(x1, y1, x2, y2):
+    total = 0
+    for y in range(y1, y2):
+        for x in range(x1, x2):
+            r, g, b, a = pix(x, y)
+            if r > 170 and g > 170 and b > 170:
+                total += 1
+    return total
+
+def dark_at(points):
+    return sum(1 for x, y in points if all(c < 85 for c in pix(x, y)[:3]))
+
+# Daily sign-in / shop panel. Block instead of clicking rewards or shop areas.
+if bright_count(995, 25, 1025, 60) >= 35 and dark_at([(640, 35), (640, 680), (250, 90)]) >= 2:
+    print("daily_shop_panel")
+    sys.exit(0)
+
+# Login landing page. It is safe for manual/login recovery, not for task-loop taps.
+login_brights = [
+    pix(540, 335), pix(620, 350), pix(700, 345), pix(640, 395)
+]
+login_bright = sum(1 for r, g, b, a in login_brights if r > 145 and g > 165 and b > 175)
+server_bar = pix(565, 585)
+if login_bright >= 3 and server_bar[2] > server_bar[0] + 18 and server_bar[2] > server_bar[1] + 5:
+    print("login_landing")
+    sys.exit(0)
+
+sys.exit(1)
+'
+}
+
+start_block_reason() {
+  if ! device_online; then
+    echo "device_offline"
+    return 0
+  fi
+
+  if anr_visible; then
+    tap 480 460 0.5
+    keyevent KEYCODE_DPAD_DOWN 0.2
+    keyevent KEYCODE_ENTER 1.0
+    echo "anr_wait_selected"
+    return 0
+  fi
+
+  local focus
+  focus="$(foreground_component || true)"
+  case "$focus" in
+    "$GAME_PACKAGE"/com.iccgame.sdk.SplashActivity)
+      echo "sdk_splash_or_notice"
+      return 0
+      ;;
+    org.chromium.webview_shell/*|com.android.webview.shell/*)
+      echo "webview_browser"
+      return 0
+      ;;
+    "")
+      echo "no_focused_game_window"
+      return 0
+      ;;
+  esac
+
+  if system_mail_panel_visible; then
+    echo "system_mail_panel"
+    return 0
+  fi
+
+  local kind
+  kind="$(screen_blocking_kind 2>/dev/null || true)"
+  if [ -n "$kind" ]; then
+    echo "$kind"
+    return 0
+  fi
+
+  return 1
+}
+
+start_preflight() {
+  local reason
+  if reason="$(start_block_reason)"; then
+    log "not starting unattended pressure test; blocking state: $reason"
+    echo "当前画面不适合启动 48 小时无人值守压测：$reason"
+    echo "已保持脚本停止，避免误点邮箱、签到奖励、商城或登录页。"
+    return 1
+  fi
+  return 0
+}
+
 run_macro() {
   local action="$1"
   local repeat="${2:-1}"
@@ -335,6 +439,10 @@ write_state() {
 
 run_loop() {
   : >"$LOG_FILE"
+  if ! start_preflight; then
+    rm -f "$PID_FILE" "$CHILD_PID_FILE"
+    exit 3
+  fi
   echo "$$" >"$PID_FILE"
   cleanup() {
     local child
@@ -406,6 +514,8 @@ start_guard() {
       exit 0
     fi
   fi
+
+  start_preflight || exit 3
 
   if command -v launchctl >/dev/null 2>&1; then
     mkdir -p "$(dirname "$LAUNCH_PLIST")"
