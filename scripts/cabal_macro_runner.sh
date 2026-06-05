@@ -1174,21 +1174,50 @@ notice_dialog_visible() {
   dump_ui_xml | grep -q 'notice-dialog'
 }
 
+notice_dialog_close_point() {
+  dump_ui_xml | python3 -c '
+import re, sys
+s = sys.stdin.read()
+m = re.search(r"resource-id=\"notice-dialog\".*?clickable=\"true\".*?bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", s)
+if not m:
+    sys.exit(1)
+x1, y1, x2, y2 = map(int, m.groups())
+print((x1 + x2) // 2, (y1 + y2) // 2)
+'
+}
+
 close_sdk_notice_dialog() {
-  if notice_dialog_visible; then
-    # The SDK notice WebView reports rotation=1 bounds; this is the real ADB
-    # coordinate for the top-right close button on the verified 720x1280 AVD.
-    tap 640 1150 2.0
+  local point x y
+  point="$(notice_dialog_close_point 2>/dev/null || true)"
+  if [ -n "$point" ]; then
+    read -r x y <<<"$point"
+    tap "$x" "$y" 2.0
     return 0
   fi
-  return 1
+  notice_dialog_visible || return 1
+  tap 1177 37 2.0
+  return 0
+}
+
+notice_dialog_still_visible_after_close() {
+  close_sdk_notice_dialog || return 1
+  sleep 2
+  notice_dialog_visible
+}
+
+close_sdk_notice_dialog_verified() {
+  if notice_dialog_still_visible_after_close; then
+    log "SDK notice dialog did not close after node-center tap; stop recovery taps."
+    return 1
+  fi
+  return 0
 }
 
 handle_sdk_announcement() {
   local focus
   if notice_dialog_visible; then
-    log "SDK notice dialog visible; close with rotated WebView coordinate."
-    close_sdk_notice_dialog || true
+    log "SDK notice dialog visible; close with UI node coordinate."
+    close_sdk_notice_dialog_verified || true
     handle_webview_browser || true
     return 0
   fi
@@ -1196,14 +1225,14 @@ handle_sdk_announcement() {
   case "$focus" in
     "$GAME_PACKAGE"/com.iccgame.sdk.SplashActivity|"$GAME_PACKAGE"/com.estsoft.cabal.androidtv.CabalActivity)
       log "Try closing SDK announcement and returning through WebView Browser Tester."
-      close_sdk_notice_dialog || true
+      close_sdk_notice_dialog_verified || true
       if handle_webview_browser; then
         return 0
       fi
       # Some emulator runs keep the announcement under SplashActivity until the native game
       # activity is nudged; this is the path verified on the test Mac.
       start_cabal_activity
-      close_sdk_notice_dialog || true
+      close_sdk_notice_dialog_verified || true
       handle_webview_browser || true
       ;;
   esac
