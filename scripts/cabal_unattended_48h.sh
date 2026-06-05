@@ -84,6 +84,24 @@ current_ui_xml() {
   "$ADB" -s "$SERIAL" shell cat /sdcard/cabal-unattended.xml 2>/dev/null || true
 }
 
+ui_blocking_kind() {
+  local ui_xml
+  ui_xml="$(current_ui_xml)"
+  if printf '%s' "$ui_xml" | grep -Eq '下载中 Data|loading_text_load_data'; then
+    echo "data_loading"
+    return 0
+  fi
+  if printf '%s' "$ui_xml" | grep -Eq 'notice-dialog|公测公告|安全运营公告|公平运营公告|公测核心信息|下载通道'; then
+    echo "sdk_notice"
+    return 0
+  fi
+  if printf '%s' "$ui_xml" | grep -Eq '请输入账号|请输入密码|登录游戏|快速注册|忘记密码|选择服务器|正在确认连接登录服务器|频道 [0-9]+|进入游戏'; then
+    echo "login_or_server"
+    return 0
+  fi
+  return 1
+}
+
 tap() {
   local x="$1"
   local y="$2"
@@ -226,6 +244,17 @@ if login_bright >= 3 and server_bar[2] > server_bar[0] + 18 and server_bar[2] > 
     print("login_landing")
     sys.exit(0)
 
+# Data loading screen: a bright centered spinner/text over a dark storm image.
+data_samples = [
+    pix(520, 440), pix(585, 440), pix(650, 440),
+    pix(620, 340), pix(650, 365)
+]
+data_bright = sum(1 for r, g, b, a in data_samples if r > 185 and g > 185 and b > 185)
+center_bg = pix(640, 360)
+if data_bright >= 3 and max(center_bg[:3]) < 140:
+    print("data_loading")
+    sys.exit(0)
+
 sys.exit(1)
 '
 }
@@ -260,6 +289,13 @@ start_block_reason() {
       return 0
       ;;
   esac
+
+  local ui_kind
+  ui_kind="$(ui_blocking_kind 2>/dev/null || true)"
+  if [ -n "$ui_kind" ]; then
+    echo "$ui_kind"
+    return 0
+  fi
 
   if system_mail_panel_visible; then
     echo "system_mail_panel"
