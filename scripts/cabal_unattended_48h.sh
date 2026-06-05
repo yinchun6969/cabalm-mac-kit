@@ -22,6 +22,7 @@ UPGRADE_EVERY_CYCLES="${UPGRADE_EVERY_CYCLES:-3}"
 DAILY_EVERY_CYCLES="${DAILY_EVERY_CYCLES:-0}"
 SCREENSHOT_EVERY_CYCLES="${SCREENSHOT_EVERY_CYCLES:-20}"
 PID_FILE="$WORK_DIR/cabal_unattended_48h.pid"
+CHILD_PID_FILE="$WORK_DIR/cabal_unattended_48h.child.pid"
 STATE_FILE="$WORK_DIR/cabal_unattended_48h.state"
 LOG_FILE="$LOG_DIR/cabal_unattended_48h.log"
 NOHUP_LOG="$LOG_DIR/cabal_unattended_48h.nohup.log"
@@ -145,11 +146,55 @@ safe_back() {
   cancel_self_drawn_danger_dialogs
 }
 
+close_character_panel() {
+  game_foreground || return 0
+  tap 389 98 0.25
+}
+
+system_mail_panel_visible() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+def pix(x, y):
+    x = max(0, min(w - 1, int(x * w / 1280)))
+    y = max(0, min(h - 1, int(y * h / 720)))
+    i = 16 + (y * w + x) * 4
+    return data[i:i + 4]
+bright = 0
+for y in range(100, 130):
+    for x in range(970, 1000):
+        r, g, b, a = pix(x, y)
+        if r > 165 and g > 165 and b > 165:
+            bright += 1
+dark_samples = [pix(940, 116), pix(1005, 116), pix(985, 145)]
+dark = sum(1 for r, g, b, a in dark_samples if r < 75 and g < 85 and b < 100)
+sys.exit(0 if bright >= 18 and dark >= 2 else 1)
+'
+}
+
+close_system_mail_panel() {
+  game_foreground || return 0
+  # Close an already-open system mail window. Do not tap the top-right mail icon.
+  system_mail_panel_visible || return 0
+  tap 985 116 0.25
+}
+
 run_macro() {
   local action="$1"
   local repeat="${2:-1}"
+  local child
   log "macro: $action $repeat"
-  SERIAL="$SERIAL" "$MACRO" "$action" "$repeat" >>"$LOG_FILE" 2>&1 || log "macro failed but loop continues: $action $repeat"
+  SERIAL="$SERIAL" "$MACRO" "$action" "$repeat" >>"$LOG_FILE" 2>&1 &
+  child="$!"
+  echo "$child" >"$CHILD_PID_FILE"
+  if ! wait "$child"; then
+    log "macro failed but loop continues: $action $repeat"
+  fi
+  rm -f "$CHILD_PID_FILE"
 }
 
 recover_if_needed() {
@@ -161,6 +206,12 @@ recover_if_needed() {
 
   cancel_self_drawn_danger_dialogs
 
+  if system_mail_panel_visible; then
+    log "system mail panel visible; run play to clear stuck mailbox without touching the mail entry."
+    run_macro play 1
+    return 0
+  fi
+
   if anr_visible; then
     log "ANR visible; choose Wait."
     tap 640 460 0.5
@@ -170,8 +221,9 @@ recover_if_needed() {
 
   case "$(foreground_component || true)" in
     "$GAME_PACKAGE"/com.iccgame.sdk.SplashActivity)
-      log "SDK announcement/splash foreground detected; run reconnect."
-      run_macro reconnect 1
+      log "SDK splash foreground detected; nudge CabalActivity and wait."
+      "$ADB" -s "$SERIAL" shell am start -n "$GAME_PACKAGE/com.estsoft.cabal.androidtv.CabalActivity" >/dev/null 2>&1 || true
+      sleep 8
       ;;
     com.google.android.googlequicksearchbox/*|com.android.launcher3/*)
       log "system/search foreground detected; return to game."
@@ -202,6 +254,7 @@ reward_and_stage_sweep() {
 cancel_dangerous_dialogs() {
   game_foreground || return 0
   cancel_self_drawn_danger_dialogs
+  close_system_mail_panel
   local ui_xml
   ui_xml="$(current_ui_xml)"
   if printf '%s' "$ui_xml" | grep -q '退出游戏'; then
@@ -220,16 +273,16 @@ safe_task_cycle() {
   game_foreground || return 0
   cancel_dangerous_dialogs
   safe_back 0.25
-  reward_and_stage_sweep
+  close_system_mail_panel
   # Left task panel / active quest title.
   tap 92 252 6.0
   tap 96 296 6.0
   # NPC quest choices in the dialog, if a dialog is open.
   tap 222 471 1.0
   tap 222 535 1.0
-  reward_and_stage_sweep
   # Quest/autopath button near the lower-right action cluster.
   tap 1088 626 0.5
+  close_system_mail_panel
 }
 
 dungeon_and_progress_sweep() {
@@ -283,7 +336,18 @@ write_state() {
 run_loop() {
   : >"$LOG_FILE"
   echo "$$" >"$PID_FILE"
-  trap 'rm -f "$PID_FILE"; log "unattended pressure test stopped."' EXIT
+  cleanup() {
+    local child
+    child="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
+    if pid_is_running "$child"; then
+      kill "$child" >/dev/null 2>&1 || true
+    fi
+    rm -f "$CHILD_PID_FILE"
+    rm -f "$PID_FILE"
+    log "unattended pressure test stopped."
+  }
+  trap cleanup EXIT
+  trap 'exit 0' INT TERM
 
   local start_epoch end_epoch now cycle
   start_epoch="$(date +%s)"
@@ -309,24 +373,19 @@ run_loop() {
       run_macro network 1
     fi
 
-    reward_and_stage_sweep
     safe_task_cycle
-    reward_and_stage_sweep
     run_macro battle 2
-    dungeon_and_progress_sweep
-    reward_and_stage_sweep
+    close_system_mail_panel
 
     if [ $((cycle % UPGRADE_EVERY_CYCLES)) -eq 0 ]; then
       cancel_dangerous_dialogs
       safe_back 0.25
       run_macro upgrade 1
-      reward_and_stage_sweep
+      close_character_panel
+      close_system_mail_panel
     fi
 
-    if [ "$DAILY_EVERY_CYCLES" -gt 0 ] && [ $((cycle % DAILY_EVERY_CYCLES)) -eq 0 ]; then
-      run_macro daily 1
-      reward_and_stage_sweep
-    fi
+    # Intentionally do not run daily/mail/reward sweeps in unattended mode.
 
     if [ $((cycle % SCREENSHOT_EVERY_CYCLES)) -eq 0 ]; then
       capture_screenshot "$cycle"
@@ -434,6 +493,12 @@ stop_guard() {
   fi
   local pid
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  local child
+  child="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
+  if pid_is_running "$child"; then
+    kill "$child" >/dev/null 2>&1 || true
+    echo "已停止当前子宏：PID $child"
+  fi
   if pid_is_running "$pid"; then
     kill "$pid" >/dev/null 2>&1 || true
     echo "已停止 48 小时压测：PID $pid"
@@ -441,6 +506,7 @@ stop_guard() {
     echo "压测 PID 已不存在：$pid"
   fi
   rm -f "$PID_FILE"
+  rm -f "$CHILD_PID_FILE"
   rm -f "$LAUNCH_PLIST"
 }
 
@@ -469,11 +535,12 @@ case "${1:-start}" in
   run) run_loop ;;
   once)
     recover_if_needed
-    reward_and_stage_sweep
     safe_task_cycle
     run_macro battle 2
+    cancel_dangerous_dialogs
     run_macro upgrade 1
-    dungeon_and_progress_sweep
+    close_character_panel
+    close_system_mail_panel
     ;;
   *)
     echo "Usage: $0 [start|stop|status|run|once]"

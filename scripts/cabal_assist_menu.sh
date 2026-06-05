@@ -44,12 +44,40 @@ keyevent() {
 close_panels() {
   keyevent BACK 0.3
   tap 1050 150 0.25
-  tap 1010 39 0.25
-  tap 1010 43 0.25
-  tap 1196 35 0.25
-  tap 1237 44 0.25
+  close_system_mail_panel
   tap 640 610 0.25
   tap 523 472 0.25
+}
+
+system_mail_panel_visible() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+def pix(x, y):
+    x = max(0, min(w - 1, int(x * w / 1280)))
+    y = max(0, min(h - 1, int(y * h / 720)))
+    i = 16 + (y * w + x) * 4
+    return data[i:i + 4]
+bright = 0
+for y in range(100, 130):
+    for x in range(970, 1000):
+        r, g, b, a = pix(x, y)
+        if r > 165 and g > 165 and b > 165:
+            bright += 1
+dark_samples = [pix(940, 116), pix(1005, 116), pix(985, 145)]
+dark = sum(1 for r, g, b, a in dark_samples if r < 75 and g < 85 and b < 100)
+sys.exit(0 if bright >= 18 and dark >= 2 else 1)
+'
+}
+
+close_system_mail_panel() {
+  # Close an already-open system mail window. Do not tap the top-right mail icon.
+  system_mail_panel_visible || return 0
+  tap 985 116 0.25
 }
 
 claim_mail_if_open() {
@@ -80,7 +108,7 @@ printf '  1 关闭弹窗/面板\n'
 printf '  2 邮箱一键领取并关闭\n'
 printf '  3 主线任务 10 轮\n'
 printf '  4 自动战斗/技能 30 轮\n'
-printf '  5 综合减负循环 3 轮\n'
+printf '  5 任务/战斗减负循环 3 轮（不点邮箱）\n'
 printf '  6 原宏 full 1 轮\n'
 printf '  7 启动24小时属性加点/关闭面板守护\n'
 printf '  8 停止24小时属性加点/关闭面板守护\n'
@@ -95,7 +123,7 @@ case "$action" in
   2) claim_mail_if_open ;;
   3) for _ in $(seq 1 10); do quest_once; done ;;
   4) for _ in $(seq 1 30); do battle_once; done ;;
-  5) for _ in $(seq 1 3); do close_panels; claim_mail_if_open; quest_once; battle_once; done ;;
+  5) for _ in $(seq 1 3); do close_panels; quest_once; battle_once; done ;;
   6) "$MACRO" full 1 ;;
   7) "$SCRIPT_DIR/cabal_attr_guard.sh" start ;;
   8) "$SCRIPT_DIR/cabal_attr_guard.sh" stop ;;

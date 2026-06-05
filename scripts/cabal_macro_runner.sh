@@ -307,7 +307,12 @@ ui_contains() {
 }
 
 login_or_server_screen_visible() {
-  ui_contains '请输入账号|请输入密码|登录游戏|快速注册|忘记密码|选择服务器|正在确认连接登录服务器|频道 [0-9]+|进入游戏'
+  local ui_xml
+  ui_xml="$(dump_ui_xml)"
+  if printf '%s' "$ui_xml" | grep -Eq '公测公告|安全运营公告|公平运营公告|公测核心信息|下载通道'; then
+    return 1
+  fi
+  printf '%s' "$ui_xml" | grep -Eq '请输入账号|请输入密码|登录游戏|快速注册|忘记密码|选择服务器|正在确认连接登录服务器|频道 [0-9]+|进入游戏'
 }
 
 loading_data_visible() {
@@ -1034,8 +1039,7 @@ common_confirm_sweep() {
   tap 640 610 0.25
   tap 640 650 0.25
   tap 389 98 0.2
-  tap 1194 42 0.2
-  tap 1237 44 0.2
+  close_system_mail_panel
 }
 
 skip_tutorial_popups() {
@@ -1047,13 +1051,12 @@ skip_tutorial_popups() {
   tap 650 526 0.5
   tap 640 610 0.5
   tap 389 98 0.25
-  tap 1194 42 0.25
-  tap 1237 44 0.25
+  close_system_mail_panel
 }
 
 main_quest_cycle() {
   ensure_game_foreground || return 0
-  tap 1237 44 0.25
+  close_system_mail_panel
   tap 96 296 12.0
   tap 222 471 1.1
   tap 222 471 1.1
@@ -1065,6 +1068,7 @@ main_quest_cycle() {
 
 battle_auto_cycle() {
   ensure_game_foreground || return 0
+  close_system_mail_panel
   tap 1088 626 0.8
   tap 1053 492 1.0
   tap 1240 655 1.5
@@ -1074,30 +1078,18 @@ battle_auto_cycle() {
 
 upgrade_allocate() {
   ensure_game_foreground || return 0
+  close_system_mail_panel
   tap 50 45 0.8
   tap 207 629 0.5
   tap 327 629 0.5
   tap 389 98 0.35
-  tap 1237 44 0.25
+  close_character_panel
 }
 
 daily_rewards_sweep() {
   ensure_game_foreground || return 0
-  tap 1240 40 0.5
-  tap 1168 32 1.0
-  common_confirm_sweep
-  tap 1240 40 0.5
-  tap 900 486 1.0
-  common_confirm_sweep
-  tap 1240 40 0.5
-  tap 967 486 1.0
-  common_confirm_sweep
-  tap 1240 40 0.5
-  tap 966 398 1.0
-  common_confirm_sweep
-  tap 1240 40 0.5
-  tap 966 32 1.0
-  common_confirm_sweep
+  log "daily/mail sweep is disabled to avoid system mailbox clicks."
+  close_system_mail_panel
 }
 
 buy_potions_assist() {
@@ -1109,6 +1101,43 @@ buy_potions_assist() {
   tap 650 526 0.5
   tap 640 610 0.5
   tap 1237 44 0.25
+}
+
+close_character_panel() {
+  skip_if_not_game_foreground && return 0
+  tap 389 98 0.25
+}
+
+system_mail_panel_visible() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB_BIN" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+def pix(x, y):
+    x = max(0, min(w - 1, int(x * w / 1280)))
+    y = max(0, min(h - 1, int(y * h / 720)))
+    i = 16 + (y * w + x) * 4
+    return data[i:i + 4]
+bright = 0
+for y in range(100, 130):
+    for x in range(970, 1000):
+        r, g, b, a = pix(x, y)
+        if r > 165 and g > 165 and b > 165:
+            bright += 1
+dark_samples = [pix(940, 116), pix(1005, 116), pix(985, 145)]
+dark = sum(1 for r, g, b, a in dark_samples if r < 75 and g < 85 and b < 100)
+sys.exit(0 if bright >= 18 and dark >= 2 else 1)
+'
+}
+
+close_system_mail_panel() {
+  skip_if_not_game_foreground && return 0
+  # Close an already-open system mail window. Do not tap the top-right mail icon.
+  system_mail_panel_visible || return 0
+  tap 985 116 0.25
 }
 
 disconnect_confirm_sweep() {
@@ -1141,20 +1170,40 @@ handle_webview_browser() {
   return 0
 }
 
+notice_dialog_visible() {
+  dump_ui_xml | grep -q 'notice-dialog'
+}
+
+close_sdk_notice_dialog() {
+  if notice_dialog_visible; then
+    # The SDK notice WebView reports rotation=1 bounds; this is the real ADB
+    # coordinate for the top-right close button on the verified 720x1280 AVD.
+    tap 640 1150 2.0
+    return 0
+  fi
+  return 1
+}
+
 handle_sdk_announcement() {
   local focus
+  if notice_dialog_visible; then
+    log "SDK notice dialog visible; close with rotated WebView coordinate."
+    close_sdk_notice_dialog || true
+    handle_webview_browser || true
+    return 0
+  fi
   focus="$(foreground_component || true)"
   case "$focus" in
     "$GAME_PACKAGE"/com.iccgame.sdk.SplashActivity|"$GAME_PACKAGE"/com.estsoft.cabal.androidtv.CabalActivity)
       log "Try closing SDK announcement and returning through WebView Browser Tester."
-      tap 1196 35 2.0
+      close_sdk_notice_dialog || true
       if handle_webview_browser; then
         return 0
       fi
       # Some emulator runs keep the announcement under SplashActivity until the native game
       # activity is nudged; this is the path verified on the test Mac.
       start_cabal_activity
-      tap 1196 35 2.0
+      close_sdk_notice_dialog || true
       handle_webview_browser || true
       ;;
   esac
@@ -1166,9 +1215,6 @@ enter_cached_character_flow() {
   tap 640 455 8.0
   # Character page: start the selected character.
   tap 1120 672 30.0
-  # Store and sign-in popups that can cover the real scene.
-  tap 1010 39 1.0
-  tap 1010 43 1.0
 }
 
 play_to_main_scene() {
@@ -1263,7 +1309,7 @@ enter_game_after_load() {
       data_ticks=0
     fi
     skip_if_not_game_foreground && continue
-    tap 1194 42 0.8
+    close_sdk_notice_dialog || true
     login_or_server_screen_visible && return 0
     tap 447 484 0.8
     login_or_server_screen_visible && return 0
@@ -1321,7 +1367,6 @@ full_assist_cycle() {
   reconnect_game
   skip_tutorial_popups
   upgrade_allocate
-  daily_rewards_sweep
   main_quest_cycle
   battle_auto_cycle
 }
@@ -1338,7 +1383,7 @@ usage() {
   quest         主线任务循环：点任务、自动寻路、对话、领奖、开 AUTO
   battle        战斗辅助循环：AUTO、普攻、技能、COMBO、药水
   upgrade       升级后自动分配属性点并关闭角色面板
-  daily         每日奖励扫一遍：邮箱、活动、礼物盒、通行证等常见入口
+  daily         已禁用邮箱/每日奖励扫点：只关闭已打开邮箱窗口
   buy_potions   买药辅助入口：打开 NPC/商店相关入口并点常见购买确认
   sync_resources 同步已验证资源补丁：只修复本地资源文件，不复制账号数据
   network       修复模拟器内网络：清代理、Private DNS、IPv6、ipv6proxy
@@ -1346,7 +1391,7 @@ usage() {
   recover       更强恢复：无设备时自动启动模拟器，重启游戏，处理断线和公告
   play          启动并尽量进入真实主游戏场景：公告/WebView/服务器/角色/常见弹窗
   enter         等待下载完成，持续关闭公告并尝试进入游戏
-  full          综合执行：skip + upgrade + daily + quest + battle
+  full          综合执行：skip + upgrade + quest + battle（不点邮箱）
 
 例子:
   ./cabal_macro_runner.sh quest 5

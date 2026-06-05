@@ -56,6 +56,44 @@ keyevent() {
   sleep "$delay"
 }
 
+close_character_panel() {
+  local serial="$1"
+  tap "$serial" 389 98 0.25
+}
+
+system_mail_panel_visible() {
+  local serial="$1"
+  command -v python3 >/dev/null 2>&1 || return 1
+  "$ADB" -s "$serial" exec-out screencap 2>/dev/null | python3 -c '
+import struct, sys
+data = sys.stdin.buffer.read()
+if len(data) < 16:
+    sys.exit(1)
+w, h, fmt, _ = struct.unpack_from("<IIII", data, 0)
+def pix(x, y):
+    x = max(0, min(w - 1, int(x * w / 1280)))
+    y = max(0, min(h - 1, int(y * h / 720)))
+    i = 16 + (y * w + x) * 4
+    return data[i:i + 4]
+bright = 0
+for y in range(100, 130):
+    for x in range(970, 1000):
+        r, g, b, a = pix(x, y)
+        if r > 165 and g > 165 and b > 165:
+            bright += 1
+dark_samples = [pix(940, 116), pix(1005, 116), pix(985, 145)]
+dark = sum(1 for r, g, b, a in dark_samples if r < 75 and g < 85 and b < 100)
+sys.exit(0 if bright >= 18 and dark >= 2 else 1)
+'
+}
+
+close_system_mail_panel() {
+  local serial="$1"
+  # Close an already-open system mail window. Do not tap the top-right mail icon.
+  system_mail_panel_visible "$serial" || return 0
+  tap "$serial" 985 116 0.25
+}
+
 attr_cycle() {
   local serial="$1"
 
@@ -73,17 +111,16 @@ attr_cycle() {
   # Close an already-open character/attribute panel first, then open the
   # character panel and tap the game's own auto-allocation controls.
   keyevent "$serial" BACK 0.35
-  tap "$serial" 1237 44 0.25
-  tap "$serial" 1194 42 0.25
+  close_character_panel "$serial"
+  close_system_mail_panel "$serial"
 
   tap "$serial" 50 45 0.9
   tap "$serial" 207 629 0.5
   tap "$serial" 327 629 0.5
 
   # Close character/attribute panels and common confirm overlays.
-  tap "$serial" 389 98 0.3
-  tap "$serial" 1237 44 0.25
-  tap "$serial" 1194 42 0.25
+  close_character_panel "$serial"
+  close_system_mail_panel "$serial"
   keyevent "$serial" BACK 0.25
 }
 
