@@ -2,7 +2,11 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${CABALM_HOME:-$HOME/CabalmMacKit}"
+DEFAULT_INSTALL_DIR="$HOME/CabalmMacKit"
+if [ -d /Volumes/DDISK ]; then
+  DEFAULT_INSTALL_DIR="/Volumes/DDISK/macOS/CabalmMacKit"
+fi
+INSTALL_DIR="${CABALM_HOME:-$DEFAULT_INSTALL_DIR}"
 DESKTOP_DIR="${DESKTOP_DIR:-$HOME/Desktop}"
 
 mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/config" "$INSTALL_DIR/tmp" "$INSTALL_DIR/logs" "$INSTALL_DIR/resource_chunks" "$INSTALL_DIR/apk"
@@ -56,11 +60,13 @@ if [ -d "/Volumes/DDISK/macOS/Android/avd" ]; then
 fi
 
 set_config_value GPU_MODE swangle
+set_config_value CABALM_HOME "$INSTALL_DIR"
 set_config_value MEMORY_MB 6144
 set_config_value CORES 4
 set_config_value FPS 30
 set_config_value EMULATOR_LAUNCH_METHOD terminal
 set_config_value LOAD_WAIT_SECONDS 600
+set_config_value POST_DATA_WAIT_SECONDS 45
 
 make_command() {
   local path="$1"
@@ -81,6 +87,7 @@ export MEMORY_MB=6144
 export CORES=4
 export EMULATOR_LAUNCH_METHOD=terminal
 export LOAD_WAIT_SECONDS=600
+export POST_DATA_WAIT_SECONDS=45
 cd \"$INSTALL_DIR/scripts\"
 exec ./cabal_macro_runner.sh play 1"
 

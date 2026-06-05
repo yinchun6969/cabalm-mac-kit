@@ -29,6 +29,7 @@ WRITABLE_SYSTEM="${WRITABLE_SYSTEM:-1}"
 AUTO_BOOT="${AUTO_BOOT:-1}"
 BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-120}"
 LOAD_WAIT_SECONDS="${LOAD_WAIT_SECONDS:-600}"
+POST_DATA_WAIT_SECONDS="${POST_DATA_WAIT_SECONDS:-45}"
 GAME_PACKAGE="${GAME_PACKAGE:-com.u1game.cabalm}"
 GAME_ACTIVITY="${GAME_ACTIVITY:-com.iccgame.sdk.SplashActivity}"
 GAME_FILES_DIR="${GAME_FILES_DIR:-/data/data/$GAME_PACKAGE/files}"
@@ -269,6 +270,31 @@ current_focus_line() {
   adb_shell dumpsys window windows 2>/dev/null | awk '/mCurrentFocus=/ { print; exit }'
 }
 
+emulator_console_cmd() {
+  local command="$1"
+  local port="${SERIAL#emulator-}"
+  local token_file="$HOME/.emulator_console_auth_token"
+  if ! command -v nc >/dev/null 2>&1 || [ "$port" = "$SERIAL" ] || [ ! -f "$token_file" ]; then
+    return 1
+  fi
+  {
+    printf 'auth %s\n' "$(cat "$token_file")"
+    printf '%s\n' "$command"
+    printf 'quit\n'
+  } | nc -w 3 127.0.0.1 "$port" >/dev/null 2>&1
+}
+
+ensure_landscape_window() {
+  adb_shell settings put system accelerometer_rotation 0 >/dev/null 2>&1 || true
+  adb_shell settings put system user_rotation 1 >/dev/null 2>&1 || true
+  if adb_shell dumpsys input 2>/dev/null | grep -q 'Viewport: displayId=0.*deviceSize=\[1280, 720\]'; then
+    return 0
+  fi
+  log "Rotate emulator display back to landscape."
+  emulator_console_cmd rotate || true
+  scaled_sleep 2
+}
+
 dump_ui_xml() {
   adb_shell rm -f /sdcard/cabal-window.xml >/dev/null 2>&1 || true
   adb_shell uiautomator dump /sdcard/cabal-window.xml >/dev/null 2>&1 || true
@@ -297,6 +323,8 @@ dismiss_system_anr() {
     log "SystemUI ANR dialog detected; tap Wait."
     adb_shell input tap 640 460 >/dev/null 2>&1 || true
     adb_shell input tap 260 580 >/dev/null 2>&1 || true
+    adb_shell input keyevent KEYCODE_DPAD_DOWN >/dev/null 2>&1 || true
+    adb_shell input keyevent KEYCODE_ENTER >/dev/null 2>&1 || true
     scaled_sleep 2
   fi
 }
@@ -306,6 +334,21 @@ is_game_foreground() {
     "$GAME_PACKAGE"/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+recover_system_foreground() {
+  local focus
+  focus="$(foreground_component || true)"
+  case "$focus" in
+    com.google.android.googlequicksearchbox/*|com.android.launcher3/*)
+      log "System/search foreground detected (${focus}); return to game."
+      adb_shell input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
+      adb_shell am force-stop com.google.android.googlequicksearchbox >/dev/null 2>&1 || true
+      start_cabal_activity
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 webview_browser_foreground() {
@@ -323,6 +366,9 @@ ensure_game_foreground() {
 skip_if_not_game_foreground() {
   if is_game_foreground; then
     return 1
+  fi
+  if recover_system_foreground; then
+    return 0
   fi
   log "Skip game taps because foreground is $(foreground_component || echo unknown)."
   return 0
@@ -655,6 +701,7 @@ EOF
 }
 
 prepare_game_screen() {
+  ensure_landscape_window
   adb_shell settings put secure show_rotation_suggestions 0 >/dev/null 2>&1 || true
   adb_shell settings put global policy_control "immersive.full=*" >/dev/null 2>&1 || true
   adb_shell settings put system volume_music 0 >/dev/null 2>&1 || true
@@ -683,12 +730,17 @@ repair_network() {
   apply_runtime_device_props
   apply_game_hosts_override
   ensure_direct_http_proxy
+  if [ "$GAME_DIRECT_HTTP_PROXY" = "1" ]; then
+    adb_shell settings put global http_proxy "10.0.2.2:$GAME_DIRECT_PROXY_PORT" >/dev/null 2>&1 || true
+  fi
   ensure_direct_tcp_proxies
   apply_guest_direct_proxy_rules
   ensure_game_version_db
 }
 
 ensure_game_version_db() {
+  local owner
+  local tmp_db
   if [ "$GAME_VERSION_GUARD" != "1" ]; then
     return 0
   fi
@@ -699,7 +751,25 @@ ensure_game_version_db() {
   if adb_shell "sqlite3 '$GAME_VERSION_DB' \"update version set version=$GAME_VERSION_TYPE0 where type=0; update version set version=$GAME_VERSION_TYPE1 where type=1;\"" >/dev/null 2>&1; then
     log "Game version.db guarded: type0=$GAME_VERSION_TYPE0 type1=$GAME_VERSION_TYPE1."
   else
-    log "WARNING: could not update $GAME_VERSION_DB."
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+      log "WARNING: could not update $GAME_VERSION_DB; host sqlite3 is missing."
+      return 0
+    fi
+    mkdir -p "$WORK_DIR"
+    tmp_db="$WORK_DIR/version.$SERIAL.$$.db"
+    owner="$(adb_shell "stat -c '%u:%g' '$GAME_VERSION_DB' 2>/dev/null" | tr -d '\r' | head -n 1 || true)"
+    if "$ADB_BIN" -s "$SERIAL" pull "$GAME_VERSION_DB" "$tmp_db" >/dev/null 2>&1 &&
+      sqlite3 "$tmp_db" "update version set version=$GAME_VERSION_TYPE0 where idx=0; update version set version=$GAME_VERSION_TYPE1 where idx=1;" >/dev/null 2>&1 &&
+      "$ADB_BIN" -s "$SERIAL" push "$tmp_db" "$GAME_VERSION_DB" >/dev/null 2>&1; then
+      if [ -n "$owner" ]; then
+        adb_shell "chown $owner '$GAME_VERSION_DB'" >/dev/null 2>&1 || true
+      fi
+      adb_shell "chmod 600 '$GAME_VERSION_DB'" >/dev/null 2>&1 || true
+      log "Game version.db guarded via host sqlite3: type0=$GAME_VERSION_TYPE0 type1=$GAME_VERSION_TYPE1."
+    else
+      log "WARNING: could not update $GAME_VERSION_DB."
+    fi
+    rm -f "$tmp_db"
   fi
 }
 
@@ -1046,17 +1116,16 @@ enter_cached_character_flow() {
   tap 640 455 8.0
   # Character page: start the selected character.
   tap 1120 672 30.0
-  # Store, sign-in, and activity popups that can cover the real scene.
+  # Store and sign-in popups that can cover the real scene.
   tap 1010 39 1.0
   tap 1010 43 1.0
-  tap 1196 35 1.0
-  tap 1237 44 0.5
 }
 
 play_to_main_scene() {
   local waited=0
   local next_data_log=0
   local initial_wait_seconds="${INITIAL_PLAY_WAIT_SECONDS:-60}"
+  local post_data_wait_done=0
   while [ "$waited" -lt "$LOAD_WAIT_SECONDS" ]; do
     dismiss_system_anr
     if [ "$waited" -lt "$initial_wait_seconds" ]; then
@@ -1066,6 +1135,11 @@ play_to_main_scene() {
       continue
     fi
     if ! is_game_foreground && ! webview_browser_foreground; then
+      if recover_system_foreground; then
+        scaled_sleep 5
+        waited=$((waited + 5))
+        continue
+      fi
       log "Waiting for game foreground (${waited}s)."
       scaled_sleep 5
       waited=$((waited + 5))
@@ -1074,10 +1148,17 @@ play_to_main_scene() {
     if loading_data_visible; then
       if [ "$waited" -ge "$next_data_log" ]; then
         log "Still on Data loading screen (${waited}s); wait without tapping."
-        next_data_log=$((next_data_log + 60))
+        next_data_log=$((waited + 60))
       fi
       scaled_sleep 10
       waited=$((waited + 10))
+      continue
+    fi
+    if [ "$post_data_wait_done" = "0" ]; then
+      log "Data loading cleared; wait ${POST_DATA_WAIT_SECONDS}s before closing announcements."
+      scaled_sleep "$POST_DATA_WAIT_SECONDS"
+      waited=$((waited + POST_DATA_WAIT_SECONDS))
+      post_data_wait_done=1
       continue
     fi
     handle_webview_browser && { scaled_sleep 4; waited=$((waited + 4)); continue; }
@@ -1085,7 +1166,6 @@ play_to_main_scene() {
     log "Try cached-login server/character flow after Data loading cleared (${waited}s)."
     enter_cached_character_flow || true
     dismiss_system_anr
-    common_confirm_sweep
     log "Cached-login flow was attempted; stop scripted taps and leave the game running."
     return 0
     scaled_sleep 10
