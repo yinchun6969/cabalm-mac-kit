@@ -823,6 +823,23 @@ ensure_game_version_db() {
     fi
     rm -f "$tmp_db"
   fi
+  sync_game_files_version_db
+}
+
+sync_game_files_version_db() {
+  local files_db owner current_size
+  files_db="$GAME_FILES_DIR/version.db"
+  [ "$files_db" = "$GAME_VERSION_DB" ] && return 0
+  adb_shell "[ -f '$GAME_VERSION_DB' ]" >/dev/null 2>&1 || return 0
+  owner="$(adb_shell "stat -c '%u:%g' '$GAME_VERSION_DB' 2>/dev/null" | tr -d '\r' | head -n 1 || true)"
+  current_size="$(adb_shell "stat -c '%s' '$files_db' 2>/dev/null" | tr -d '\r' | head -n 1 || true)"
+  if [ "$current_size" = "0" ] || ! adb_shell "cmp -s '$GAME_VERSION_DB' '$files_db'" >/dev/null 2>&1; then
+    if adb_shell "cp '$GAME_VERSION_DB' '$files_db' && chown ${owner:-u0_a88:u0_a88} '$files_db' && chmod 660 '$files_db'" >/dev/null 2>&1; then
+      log "Game files/version.db synced from databases/version.db."
+    else
+      log "WARNING: could not sync $files_db from $GAME_VERSION_DB."
+    fi
+  fi
 }
 
 game_files_owner() {
