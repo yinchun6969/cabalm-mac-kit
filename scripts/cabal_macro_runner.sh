@@ -30,6 +30,7 @@ AUTO_BOOT="${AUTO_BOOT:-1}"
 BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-120}"
 LOAD_WAIT_SECONDS="${LOAD_WAIT_SECONDS:-600}"
 POST_DATA_WAIT_SECONDS="${POST_DATA_WAIT_SECONDS:-45}"
+PIXEL_DETECTION_ENABLED="${PIXEL_DETECTION_ENABLED:-0}"
 GAME_PACKAGE="${GAME_PACKAGE:-com.u1game.cabalm}"
 GAME_ACTIVITY="${GAME_ACTIVITY:-com.iccgame.sdk.SplashActivity}"
 GAME_FILES_DIR="${GAME_FILES_DIR:-/data/data/$GAME_PACKAGE/files}"
@@ -103,13 +104,21 @@ find_adb() {
 }
 
 ADB_BIN="$(find_adb)"
-SDK_ROOT="$(dirname "$(dirname "$ADB_BIN")")"
+SDK_ROOT="${EMULATOR_SDK_ROOT:-$(dirname "$(dirname "$ADB_BIN")")}"
 LOG_DIR="${LOG_DIR:-$CABALM_HOME/logs}"
 EMULATOR_DYLD_LIBRARY_PATH="$SDK_ROOT/emulator/lib64:$SDK_ROOT/emulator/lib64/qt/lib:$SDK_ROOT/emulator/qemu/darwin-aarch64${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 EMULATOR_DYLD_FALLBACK_LIBRARY_PATH="$SDK_ROOT/emulator/lib64:$SDK_ROOT/emulator/lib64/qt/lib:$SDK_ROOT/emulator/qemu/darwin-aarch64${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
 
 find_emulator() {
   local adb_dir sdk_root
+  if [ -n "${EMULATOR_BIN:-}" ] && [ -x "$EMULATOR_BIN" ]; then
+    printf '%s\n' "$EMULATOR_BIN"
+    return
+  fi
+  if [ -n "${EMULATOR_SDK_ROOT:-}" ] && [ -x "$EMULATOR_SDK_ROOT/emulator/emulator" ]; then
+    printf '%s\n' "$EMULATOR_SDK_ROOT/emulator/emulator"
+    return
+  fi
   adb_dir="$(dirname "$ADB_BIN")"
   sdk_root="$(dirname "$adb_dir")"
   if [ -x "$sdk_root/emulator/emulator" ]; then
@@ -418,6 +427,7 @@ keyevent() {
 }
 
 dialog_button_kind() {
+  [ "$PIXEL_DETECTION_ENABLED" = "1" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   "$ADB_BIN" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
 import struct, sys
@@ -522,6 +532,8 @@ launch_emulator() {
   local launch_label="com.macos.android.emulator.$(printf '%s' "$AVD_NAME" | tr -c '[:alnum:]_.-' '_')"
   local launch_agent_dir="$HOME/Library/LaunchAgents"
   local launch_plist="$launch_agent_dir/${launch_label}.plist"
+  local launch_log_dir="$HOME/Library/Logs/CabalmMacKit"
+  local launch_log_file="$launch_log_dir/${AVD_NAME}-${GPU_MODE}.launchd.log"
   local terminal_launcher="$WORK_DIR/start_${AVD_NAME}_${GPU_MODE}.sh"
   local uid
   uid="$(id -u)"
@@ -597,8 +609,19 @@ EOF
     echo "Terminal launch failed; falling back to launchd/nohup." >&2
   fi
 
+  if [ "$EMULATOR_LAUNCH_METHOD" = "screen" ] && command -v screen >/dev/null 2>&1; then
+    local screen_session="cabalm_${AVD_NAME}_${EMULATOR_PORT:-auto}"
+    screen -S "$screen_session" -X quit >/dev/null 2>&1 || true
+    if screen -dmS "$screen_session" /bin/bash "$terminal_launcher"; then
+      echo "Emulator screen session: $screen_session"
+      echo "Emulator log: $log_file"
+      return
+    fi
+    echo "screen launch failed; falling back to launchd/nohup." >&2
+  fi
+
   if [ "$EMULATOR_LAUNCH_METHOD" = "launchd" ] && command -v launchctl >/dev/null 2>&1; then
-    mkdir -p "$launch_agent_dir"
+    mkdir -p "$launch_agent_dir" "$launch_log_dir"
     umask 022
     cat >"$launch_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -609,6 +632,12 @@ EOF
   <string>${launch_label}</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>${HOME}</string>
+    <key>TMPDIR</key>
+    <string>${TMPDIR}</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ANDROID_AVD_HOME</key>
     <string>${AVD_HOME}</string>
     <key>ANDROID_HOME</key>
@@ -622,76 +651,19 @@ EOF
   </dict>
   <key>ProgramArguments</key>
   <array>
-    <string>${EMULATOR_BIN}</string>
-	    <string>-avd</string>
-	    <string>${AVD_NAME}</string>
-$(if [ -n "$EMULATOR_PORT" ]; then printf '    <string>-port</string>\n    <string>%s</string>\n' "$EMULATOR_PORT"; fi)
-	    <string>-gpu</string>
-    <string>${GPU_MODE}</string>
-    <string>-no-snapshot-load</string>
-    <string>-no-snapshot-save</string>
-    <string>-no-boot-anim</string>
-    <string>-no-metrics</string>
-    <string>-no-audio</string>
-    <string>-skip-adb-auth</string>
-$(if [ "$WRITABLE_SYSTEM" = "1" ]; then printf '    <string>-writable-system</string>\n'; fi)
-    <string>-netdelay</string>
-    <string>none</string>
-    <string>-netspeed</string>
-    <string>full</string>
-    <string>-dns-server</string>
-    <string>192.168.1.1,223.5.5.5,119.29.29.29,8.8.8.8</string>
-    <string>-prop</string>
-    <string>ro.product.brand=${DEVICE_BRAND}</string>
-    <string>-prop</string>
-    <string>ro.product.manufacturer=${DEVICE_MANUFACTURER}</string>
-    <string>-prop</string>
-    <string>ro.product.model=${DEVICE_MODEL}</string>
-    <string>-prop</string>
-    <string>ro.product.name=${DEVICE_PRODUCT}</string>
-    <string>-prop</string>
-    <string>ro.product.device=${DEVICE_DEVICE}</string>
-    <string>-prop</string>
-    <string>ro.product.system.brand=${DEVICE_BRAND}</string>
-    <string>-prop</string>
-    <string>ro.product.system.manufacturer=${DEVICE_MANUFACTURER}</string>
-    <string>-prop</string>
-    <string>ro.product.system.model=${DEVICE_MODEL}</string>
-    <string>-prop</string>
-    <string>ro.product.system.name=${DEVICE_PRODUCT}</string>
-    <string>-prop</string>
-    <string>ro.product.system.device=${DEVICE_DEVICE}</string>
-    <string>-prop</string>
-    <string>ro.product.vendor.brand=${DEVICE_BRAND}</string>
-    <string>-prop</string>
-    <string>ro.product.vendor.manufacturer=${DEVICE_MANUFACTURER}</string>
-    <string>-prop</string>
-    <string>ro.product.vendor.model=${DEVICE_MODEL}</string>
-    <string>-prop</string>
-    <string>ro.product.vendor.name=${DEVICE_PRODUCT}</string>
-    <string>-prop</string>
-    <string>ro.product.vendor.device=${DEVICE_DEVICE}</string>
-    <string>-prop</string>
-    <string>ro.build.product=${DEVICE_DEVICE}</string>
-    <string>-prop</string>
-    <string>ro.product.board=${DEVICE_DEVICE}</string>
-    <string>-prop</string>
-    <string>persist.macos.virtual.model_code=${DEVICE_MODEL_CODE}</string>
-    <string>-memory</string>
-    <string>${MEMORY_MB}</string>
-    <string>-cores</string>
-    <string>${CORES}</string>
-    <string>-vsync-rate</string>
-    <string>${FPS}</string>
+    <string>/bin/bash</string>
+    <string>${terminal_launcher}</string>
   </array>
+  <key>WorkingDirectory</key>
+  <string>${WORK_DIR}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>LimitLoadToSessionType</key>
   <string>Aqua</string>
   <key>StandardOutPath</key>
-  <string>${log_file}</string>
+  <string>${launch_log_file}</string>
   <key>StandardErrorPath</key>
-  <string>${log_file}</string>
+  <string>${launch_log_file}</string>
 </dict>
 </plist>
 EOF
@@ -1126,6 +1098,7 @@ close_character_panel() {
 }
 
 system_mail_panel_visible() {
+  [ "$PIXEL_DETECTION_ENABLED" = "1" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   "$ADB_BIN" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
 import struct, sys

@@ -21,6 +21,8 @@ NETWORK_EVERY_CYCLES="${NETWORK_EVERY_CYCLES:-20}"
 UPGRADE_EVERY_CYCLES="${UPGRADE_EVERY_CYCLES:-3}"
 DAILY_EVERY_CYCLES="${DAILY_EVERY_CYCLES:-0}"
 SCREENSHOT_EVERY_CYCLES="${SCREENSHOT_EVERY_CYCLES:-20}"
+SCREENSHOT_ENABLED="${SCREENSHOT_ENABLED:-0}"
+PIXEL_DETECTION_ENABLED="${PIXEL_DETECTION_ENABLED:-0}"
 PID_FILE="$WORK_DIR/cabal_unattended_48h.pid"
 CHILD_PID_FILE="$WORK_DIR/cabal_unattended_48h.child.pid"
 STATE_FILE="$WORK_DIR/cabal_unattended_48h.state"
@@ -118,6 +120,7 @@ keyevent() {
 }
 
 dialog_button_kind() {
+  [ "$PIXEL_DETECTION_ENABLED" = "1" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
 import struct, sys
@@ -170,6 +173,7 @@ close_character_panel() {
 }
 
 system_mail_panel_visible() {
+  [ "$PIXEL_DETECTION_ENABLED" = "1" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
 import struct, sys
@@ -202,6 +206,7 @@ close_system_mail_panel() {
 }
 
 screen_blocking_kind() {
+  [ "$PIXEL_DETECTION_ENABLED" = "1" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   "$ADB" -s "$SERIAL" exec-out screencap 2>/dev/null | python3 -c '
 import struct, sys
@@ -436,6 +441,7 @@ dungeon_and_progress_sweep() {
 }
 
 capture_screenshot() {
+  [ "$SCREENSHOT_ENABLED" = "1" ] || return 0
   local shot="$SCREENSHOT_DIR/$(date '+%Y%m%d-%H%M%S')-cycle-${1:-0}.png"
   "$ADB" -s "$SERIAL" exec-out screencap -p >"$shot" 2>/dev/null &
   local pid="$!"
@@ -531,7 +537,7 @@ run_loop() {
 
     # Intentionally do not run daily/mail/reward sweeps in unattended mode.
 
-    if [ $((cycle % SCREENSHOT_EVERY_CYCLES)) -eq 0 ]; then
+    if [ "$SCREENSHOT_ENABLED" = "1" ] && [ "$SCREENSHOT_EVERY_CYCLES" -gt 0 ] && [ $((cycle % SCREENSHOT_EVERY_CYCLES)) -eq 0 ]; then
       capture_screenshot "$cycle"
     fi
 
